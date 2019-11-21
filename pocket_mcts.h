@@ -365,7 +365,7 @@ void uct<STATE>::node::update(const scores_t &sv)
     assert(score.size() == sv.size());
 
     std::transform(score.begin(), score.end(), sv.begin(), score.begin(),
-                   std::plus<typename scores_t::value_type>());
+                   std::plus());
   }
 }
 
