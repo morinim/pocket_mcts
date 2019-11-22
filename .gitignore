@@ -1,0 +1,9 @@
+# Temporary files
+*.P
+*.o
+*.*~
+*.a
+tmp/
+
+# Executables
+build/
