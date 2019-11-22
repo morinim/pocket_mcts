@@ -146,6 +146,12 @@ int read_move()
   return c;
 }
 
+bool legal(const state &s, state::action a)
+{
+  const auto actions(s.actions());
+  return std::find(actions.begin(), actions.end(), a) != actions.end();
+}
+
 int main()
 {
   state s;
@@ -153,9 +159,13 @@ int main()
 
   for (;;)
   {
-    int a(read_move());
-    if (a < 0)
-      break;
+    int a(-1);
+    do
+    {
+      a = read_move();
+      if (a < 0)
+        return 0;
+    } while (!legal(s, state::action(a)));
 
     s.take_action(state::action(a));
     std::cout << s << std::endl;
