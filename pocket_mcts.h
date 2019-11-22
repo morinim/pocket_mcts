@@ -221,7 +221,7 @@ struct uct<STATE>::node
   agent_id_t agent_id;   /// id of the active player
 };  // struct uct::node
 
-template<class STATE> double uct<STATE>::node::uct_k = 1.0;
+template<class STATE> double uct<STATE>::node::uct_k = std::sqrt(2.0);
 
 ///
 /// \param[in] state
@@ -315,7 +315,7 @@ typename uct<STATE>::node *uct<STATE>::node::select_child()
 
       // Agent-just-moved point of view for the score.
       return child.score[agent_id] / child.visits
-             + uct_k * std::sqrt(2 * std::log(visits) / child.visits);
+             + uct_k * std::sqrt(std::log(visits) / child.visits);
     };
 
   return &*std::max_element(child_nodes.begin(), child_nodes.end(),
