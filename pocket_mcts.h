@@ -21,6 +21,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <random>
 #include <string>
 #include <sstream>
@@ -116,17 +117,15 @@ private:
 /// {
 /// public:
 ///   using action = /* the representation of an action/move */;
-///                  // also required is a sentinel value `action::sentry()`
 ///
 ///   std::vector<action> actions() const;  // set of available actions in this
-///                                         // state
+///                                         // state. MUST return an empty
+///                                         // container for final states
 ///   void take_action(action);             // performs the required action
 ///                                         // changing the current state
 ///   unsigned agent_id() const;            // active agent
 ///   std::vector<double> eval() const;     // how good is this state from each
 ///                                         // agent's POV
-///   bool is_final() const;                // returns `true` if the state is
-///                                         // final
 /// private:
 ///   // ...Hic sunt leones...
 /// };
@@ -136,13 +135,12 @@ private:
 /// structural design pattern).
 /// \endparblock
 ///
-/// Assumes game results in the `[0.0, 1.0]` range. Supports both single and
+/// Assumes game results in the `[0.0; 1.0]` range. Supports both single and
 /// multiple agents.
 ///
 /// \note
-/// Code initially based on the Python implementation at
-/// http://mcts.ai/code/index.html (Peter Cowling, Ed Powley, Daniel Whitehouse
-/// - University of York).
+/// Code initially based on the Python implementation at http://mcts.ai/
+/// (Peter Cowling, Ed Powley, Daniel Whitehouse - University of York).
 ///
 template<class STATE>
 class uct
@@ -164,7 +162,7 @@ public:
   uct &log_depth(unsigned) noexcept;
   uct &verbose(bool) noexcept;
 
-  std::pair<action, scores_t> run();
+  std::pair<std::optional<action>, scores_t> run();
 
 private:
   struct node;
@@ -187,6 +185,9 @@ private:
 ///
 /// A node in the game tree.
 ///
+/// There is just a single instance of this class for the root node of the
+/// game tree.
+///
 template<class STATE>
 struct uct<STATE>::node
 {
@@ -194,26 +195,25 @@ struct uct<STATE>::node
 
   static double uct_k;
 
-  explicit node(const STATE &, const action & = action::sentry(),
-                node * = nullptr);
+  explicit node(const STATE &, node * = nullptr);
 
-  node *select_child();
+  std::pair<action, node *> select_child();
   node *add_child(const STATE &);
   void update(const scores_t &);
 
   bool fully_expanded() const;
+  const action *untried_action() const;
 
   std::string graph(unsigned) const;
 
   // *** DATA MEMBERS ***
-  action parent_action;  /// used during selection
-  node    *parent_node;  /// used during backpropagation
+  const std::vector<action> actions;
+  std::vector<node>     child_nodes;
 
-  std::vector<action> untried_actions;
-  std::vector<node>       child_nodes;
+  node *const parent_node;  /// used during backpropagation
 
-  /// Score of the state from multiple POVs. It's an estimated value based on
-  /// simulation results.
+  /// Score of the associated state from multiple POVs. It's an estimated value
+  /// based on simulation results.
   scores_t score;
 
   std::intmax_t visits;  /// number of times this node has been visited
@@ -224,28 +224,37 @@ struct uct<STATE>::node
 template<class STATE> double uct<STATE>::node::uct_k = std::sqrt(2.0);
 
 ///
-/// \param[in] state
-/// \param[in] parent_action the move that got us to the current node/state
-///                          (`action::sentry()` for the root node)
-/// \param[in] parent_node   `nullptr` for the root node
+/// \param[in] state state associated with the node
+/// \param[in] parent_node   pointer to the parent node (`nullptr` for the root
+///                          node)
 ///
 /// New nodes are created during the expansion phase via the `add_child`
 /// method.
 ///
 template<class STATE>
-uct<STATE>::node::node(const STATE &state, const action &parent_a,
-                       node *parent_n)
-  : parent_action(parent_a), parent_node(parent_n),
-    untried_actions(state.actions()), child_nodes(), score(), visits(0),
-    agent_id(state.agent_id())
+uct<STATE>::node::node(const STATE &state, node *parent_n)
+  : actions(state.actions()), child_nodes(), parent_node(parent_n), score(),
+    visits(0), agent_id(state.agent_id())
 {
-  child_nodes.reserve(untried_actions.capacity());  // to avoid reallocation
+  child_nodes.reserve(actions.size());  // to avoid reallocation
 }
+
+///
+/// \return a pointer to the first untried action (`nullptr` if there aren't
+///         untried actions)
+///
+template<class STATE>
+const typename uct<STATE>::action *uct<STATE>::node::untried_action() const
+{
+  const auto children(child_nodes.size());
+  return children == actions.size() ? nullptr : &actions[children];
+}
+
 
 template<class STATE>
 bool uct<STATE>::node::fully_expanded() const
 {
-  return untried_actions.empty() && child_nodes.size();
+  return child_nodes.capacity() && !untried_action();
 }
 
 template<class STATE>
@@ -254,8 +263,10 @@ std::string uct<STATE>::node::graph(unsigned log_depth) const
   std::string ret("digraph g {");
   unsigned nodes(0);
 
-  const std::function<void (const node &, unsigned, unsigned)> visit(
-    [&](const node &n, unsigned depth, unsigned parent_id)
+  const std::function<void (const node &, unsigned, unsigned, const action *)>
+    visit(
+    [&](const node &n, unsigned depth, unsigned parent_id,
+        const action *parent_a)
     {
       const auto id(++nodes);
       const auto node_name("N" + std::to_string(id));
@@ -280,16 +291,16 @@ std::string uct<STATE>::node::graph(unsigned log_depth) const
         ret += parent_name + std::string("->") + node_name;
 
         std::ostringstream ss;
-        ss << n.parent_action;
+        ss << *parent_a;
         ret += " [label=\"" + ss.str() + "\"];";
       }
 
       if (depth < log_depth)
-        for (const auto &child : n.child_nodes)
-          visit(child, depth + 1, id);
+        for (std::size_t i(0); i < n.child_nodes.size(); ++i)
+          visit(n.child_nodes[i], depth + 1, id, &n.actions[i]);
     });
 
-  visit(*this, 0, 0);
+  visit(*this, 0, 0, nullptr);
 
   ret += "}";
 
@@ -300,7 +311,8 @@ std::string uct<STATE>::node::graph(unsigned log_depth) const
 /// Selects a child node using the UCB formula.
 ///
 template<class STATE>
-typename uct<STATE>::node *uct<STATE>::node::select_child()
+std::pair<typename uct<STATE>::action,
+          typename uct<STATE>::node *> uct<STATE>::node::select_child()
 {
   assert(fully_expanded());  // called only during the selection phase
 
@@ -318,32 +330,35 @@ typename uct<STATE>::node *uct<STATE>::node::select_child()
              + uct_k * std::sqrt(std::log(visits) / child.visits);
     };
 
-  return &*std::max_element(child_nodes.begin(), child_nodes.end(),
-                            [ucb](const node &lhs, const node &rhs)
-                            {
-                              return ucb(lhs) < ucb(rhs);
-                            });
+  const auto child(std::max_element(child_nodes.begin(), child_nodes.end(),
+                                    [ucb](const node &lhs, const node &rhs)
+                                    {
+                                      return ucb(lhs) < ucb(rhs);
+                                    }));
+  const auto pos(std::distance(child_nodes.begin(), child));
+
+
+  return {actions[pos], &*child};
 }
 
 ///
-/// Adds a new child to the current node and updates the list of untried
-/// actions.
+/// Adds a new child to the current node.
 ///
 /// \param[in] s current state
 /// \return      the added child node
 ///
-/// Assumes that the child node has been reached via the last untried action.
+/// Assumes that the child node has will be reached via the first untried
+/// action.
 ///
 template<class STATE>
 typename uct<STATE>::node *uct<STATE>::node::add_child(const STATE &s)
 {
-  assert(untried_actions.size());
+  assert(untried_action());
 
   // Reallocation would create dangling pointers.
   assert(child_nodes.size() < child_nodes.capacity());
 
-  child_nodes.emplace_back(s, untried_actions.back(), this);
-  untried_actions.pop_back();
+  child_nodes.emplace_back(s, this);
 
   return &child_nodes.back();
 }
@@ -364,8 +379,10 @@ void uct<STATE>::node::update(const scores_t &sv)
   {
     assert(score.size() == sv.size());
 
-    std::transform(score.begin(), score.end(), sv.begin(), score.begin(),
-                   std::plus());
+    for (std::size_t i(0); i < score.size(); ++i)
+      score[i] += sv[i];
+    //std::transform(score.begin(), score.end(), sv.begin(), score.begin(),
+    //               std::plus());
   }
 }
 
@@ -476,7 +493,8 @@ uct<STATE> &uct<STATE>::verbose(bool v) noexcept
 /// \return the best action from the root state
 ///
 template<class STATE>
-std::pair<typename uct<STATE>::action, typename uct<STATE>::scores_t>
+std::pair<std::optional<typename uct<STATE>::action>,
+          typename uct<STATE>::scores_t>
 uct<STATE>::run()
 {
   bool stop_request(false);
@@ -485,8 +503,8 @@ uct<STATE>::run()
 
   node root_node(root_state_);
 
-  if (root_state_.is_final())
-    return {uct<STATE>::action::sentry(), root_state_.eval()};
+  if (root_node.actions.empty())
+    return {std::nullopt, root_state_.eval()};
 
   while (!stop_request)
   {
@@ -496,21 +514,23 @@ uct<STATE>::run()
     // Selection.
     while (n->fully_expanded())
     {
-      n = n->select_child();
-      state.take_action(n->parent_action);
+      const auto [best_action, best_child] = n->select_child();
+
+      n = best_child;
+      state.take_action(best_action);
     }
 
     // Expansion.
-    if (n->untried_actions.size())  // node can be expanded
+    if (n->untried_action())  // node can be expanded
     {
-      state.take_action(n->untried_actions.back());
+      state.take_action(*n->untried_action());
       n = n->add_child(state);
     }
 
     // Simulation (aka Playout / Rollout).
     auto remaining_depth(simulation_depth_);
-    for (auto actions(n->untried_actions);
-         remaining_depth && !state.is_final();
+    for (auto actions(n->actions);
+         remaining_depth && !actions.empty();
          --remaining_depth, actions = state.actions())
     {
       state.take_action(utility::random_element(actions));
@@ -531,10 +551,11 @@ uct<STATE>::run()
 
   if (verbose_)
   {
-    for (const auto &n : root_node.child_nodes)
+    for (std::size_t i(0); i < root_node.child_nodes.size(); ++i)
     {
+      const auto &n(root_node.child_nodes[i]);
       std::cout << "#-------------------------------------------\n"
-                << "# move: " << n.parent_action << "   score: "
+                << "# move: " << root_node.actions[i] << "   score: "
                 << n.score[root_node.agent_id] << '/' << n.visits
                 << std::endl;
     }
@@ -543,13 +564,15 @@ uct<STATE>::run()
   if (log_ && log_depth_)
     (*log_) << root_node.graph(log_depth_) << std::flush;
 
-  const node &best(*std::max_element(root_node.child_nodes.begin(),
-                                     root_node.child_nodes.end(),
-                                     [](const node &lhs, const node &rhs)
-                                     {
-                                       return lhs.visits < rhs.visits;
-                                     }));
-  return {best.parent_action, best.score};
+  const auto best(std::max_element(root_node.child_nodes.begin(),
+                                   root_node.child_nodes.end(),
+                                   [](const node &lhs, const node &rhs)
+                                   {
+                                     return lhs.visits < rhs.visits;
+                                   }));
+  const auto pos(std::distance(root_node.child_nodes.begin(), best));
+
+  return {root_node.actions[pos], best->score};
 }
 
 }  // namespace pocket_mcts

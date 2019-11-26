@@ -1,3 +1,17 @@
+/**
+ *  \file
+ *  \remark This file is part of POCKET MCTS.
+ *
+ *  \copyright Copyright (C) 2019 Manlio Morini.
+ *
+ *  \license
+ *  This Source Code Form is subject to the terms of the Mozilla Public
+ *  License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ *  You can obtain one at http://mozilla.org/MPL/2.0/
+ *
+ *  Example game state class for Connect 4
+ */
+
 #include <fstream>
 #include <vector>
 
@@ -17,8 +31,6 @@ class action
 {
 public:
   constexpr explicit action(int v) noexcept : val_(v) {}
-
-  static constexpr action sentry() noexcept { return action(COLS); }
 
   operator unsigned() const noexcept { return val_; }
 
@@ -46,6 +58,9 @@ public:
 
   std::vector<action> actions() const
   {
+    if (is_final())
+      return {};
+
     std::vector<action> ret;
 
     for (unsigned i(0); i < COLS; ++i)
@@ -76,10 +91,11 @@ public:
     if (is_win(bitboard_[1]))
       return {0.0, 1.0};
 
-    if (actions().empty())
-      return {0.5, 0.5};
+    for (unsigned i(0); i < COLS; ++i)
+      if (height_[i] < ROWS)
+        return {-1.0, -1.0};
 
-    return {-1.0, -1.0};
+    return {0.5, 0.5};
   }
 
   bool is_final() const
@@ -130,7 +146,7 @@ private:
 
 int read_move()
 {
-  std::cout << "\nMove: ";
+  std::cout << "\nYour move: ";
 
   int c;
   do
@@ -182,13 +198,17 @@ int main()
                                   .log(log).log_depth(2).verbose(true)
                                   .run();
 
-    s.take_action(move);
+    if (move)
+    {
+      s.take_action(*move);
 
-    for (auto v : scores)
-      std::cout << ' ' << v;
-    std::cout << std::endl;
+      std::cout << "My move: " << *move << " (";
+      for (auto v : scores)
+        std::cout << ' ' << v;
+      std::cout << ")\n";
 
-    std::cout << s << std::endl;
+      std::cout << s << std::endl;
+    }
 
     if (s.is_final())
       return 0;
