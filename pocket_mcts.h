@@ -193,20 +193,20 @@ struct uct<STATE>::node
 {
   using agent_id_t = std::invoke_result_t<decltype(&STATE::agent_id), STATE>;
 
-  static double uct_k;
-
   explicit node(const STATE &, node * = nullptr);
 
   std::pair<action, node *> select_child();
   node *add_child(const STATE &);
   void update(const scores_t &);
 
-  bool fully_expanded() const;
+  bool fully_expanded_branch() const;
   const action *untried_action() const;
 
   std::string graph(unsigned) const;
 
   // *** DATA MEMBERS ***
+  static double uct_k;
+
   const std::vector<action> actions;
   std::vector<node>     child_nodes;
 
@@ -218,7 +218,7 @@ struct uct<STATE>::node
 
   std::intmax_t visits;  /// number of times this node has been visited
 
-  agent_id_t agent_id;   /// id of the active player
+  agent_id_t agent_id;   /// id of the active agent
 };  // struct uct::node
 
 template<class STATE> double uct<STATE>::node::uct_k = std::sqrt(2.0);
@@ -251,10 +251,19 @@ const typename uct<STATE>::action *uct<STATE>::node::untried_action() const
 }
 
 
+///
+/// \return `true` for nodes associated to non-terminal states (branch nodes)
+///                that are already fully expanded
+///
+/// Child nodes are recursively selected according to some utility function
+/// until a node is reached that either describes a terminal state or isn't
+/// fully expanded (note that this isn't necessarily a leaf node of the tree).
+///
 template<class STATE>
-bool uct<STATE>::node::fully_expanded() const
+bool uct<STATE>::node::fully_expanded_branch() const
 {
-  return child_nodes.capacity() && !untried_action();
+  return actions.size()  // not associated to a terminal state (branch node)
+         && actions.size() == child_nodes.size();  // fully expanded
 }
 
 template<class STATE>
@@ -314,7 +323,7 @@ template<class STATE>
 std::pair<typename uct<STATE>::action,
           typename uct<STATE>::node *> uct<STATE>::node::select_child()
 {
-  assert(fully_expanded());  // called only during the selection phase
+  assert(fully_expanded_branch());  // called only during the selection phase
 
   const auto ucb =  // UCB score of a child node
     [this](const node &child)
@@ -353,10 +362,8 @@ std::pair<typename uct<STATE>::action,
 template<class STATE>
 typename uct<STATE>::node *uct<STATE>::node::add_child(const STATE &s)
 {
-  assert(untried_action());
-
-  // Reallocation would create dangling pointers.
-  assert(child_nodes.size() < child_nodes.capacity());
+  assert(untried_action());                             // not fully expanded
+  assert(child_nodes.size() < child_nodes.capacity());  // no reallocation
 
   child_nodes.emplace_back(s, this);
 
@@ -379,10 +386,8 @@ void uct<STATE>::node::update(const scores_t &sv)
   {
     assert(score.size() == sv.size());
 
-    for (std::size_t i(0); i < score.size(); ++i)
-      score[i] += sv[i];
-    //std::transform(score.begin(), score.end(), sv.begin(), score.begin(),
-    //               std::plus());
+    std::transform(score.begin(), score.end(), sv.begin(), score.begin(),
+                   std::plus());
   }
 }
 
@@ -512,7 +517,7 @@ uct<STATE>::run()
     STATE state(root_state_);
 
     // Selection.
-    while (n->fully_expanded())
+    while (n->fully_expanded_branch())
     {
       const auto [best_action, best_child] = n->select_child();
 
