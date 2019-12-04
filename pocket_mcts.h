@@ -169,8 +169,6 @@ private:
 
   STATE root_state_;
 
-  double k_;    // exploration bias parameter
-
   // Search time/size constraints.
   std::chrono::milliseconds max_search_time_;
   std::uintmax_t max_iterations_;
@@ -184,9 +182,6 @@ private:
 
 ///
 /// A node in the game tree.
-///
-/// There is just a single instance of this class for the root node of the
-/// game tree.
 ///
 template<class STATE>
 struct uct<STATE>::node
@@ -205,7 +200,7 @@ struct uct<STATE>::node
   std::string graph(unsigned) const;
 
   // *** DATA MEMBERS ***
-  static double uct_k;
+  static double uct_k;  /// exploration bias parameter
 
   const std::vector<action> actions;
   std::vector<node>     child_nodes;
@@ -266,6 +261,12 @@ bool uct<STATE>::node::fully_expanded_branch() const
          && actions.size() == child_nodes.size();  // fully expanded
 }
 
+///
+/// Creates a Grapviz-DOT representation of the search tree.
+///
+/// \param[in] log_depth maximum depth of the tree/graph
+/// \return              a string containing the DOT representation
+///
 template<class STATE>
 std::string uct<STATE>::node::graph(unsigned log_depth) const
 {
@@ -393,8 +394,7 @@ void uct<STATE>::node::update(const scores_t &sv)
 
 template<class STATE>
 uct<STATE>::uct(const STATE &root_state)
-  : root_state_(root_state), k_(1.0),
-    max_search_time_(0ms), max_iterations_(0),
+  : root_state_(root_state), max_search_time_(0ms), max_iterations_(0),
     simulation_depth_(std::numeric_limits<decltype(simulation_depth_)>::max()),
     log_(nullptr), log_depth_(1000), verbose_(false)
 {
@@ -416,7 +416,7 @@ uct<STATE> &uct<STATE>::exploration_bias(double v) noexcept
 {
   assert(v >= 0.0);
 
-  k_ = v;
+  uct<STATE>::uct_k = v;
   return *this;
 }
 
