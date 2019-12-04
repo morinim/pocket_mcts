@@ -493,9 +493,9 @@ uct<STATE> &uct<STATE>::verbose(bool v) noexcept
 }
 
 ///
-/// Conducts a UCT search for starting from the root state.
+/// Conducts a UCT search starting from the root state.
 ///
-/// \return the best action from the root state
+/// \return the best action from the root state and the associated score
 ///
 template<class STATE>
 std::pair<std::optional<typename uct<STATE>::action>,
@@ -513,16 +513,16 @@ uct<STATE>::run()
 
   while (!stop_request)
   {
-    node *n(&root_node);
-    STATE state(root_state_);
+    node *n(&root_node);       // current node
+    STATE state(root_state_);  // current state
 
     // Selection.
     while (n->fully_expanded_branch())
     {
       const auto [best_action, best_child] = n->select_child();
 
-      n = best_child;
       state.take_action(best_action);
+      n = best_child;
     }
 
     // Expansion.
